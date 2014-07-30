@@ -6,9 +6,20 @@ function OSCParser (model, receiveHost, receivePort)
 {
 	this.model = model;
     
+    this.transport = this.model.getTransport ();
+    this.trackBank = this.model.getTrackBank ();
+    this.masterTrack = this.model.getMasterTrack ();
+    this.scales = this.model.getScales ();
+    
+    this.trackBank.setIndication (true);
+
+    this.keysTranslation = null;
+    this.drumsTranslation = null;
+    this.updateNoteMapping ();
+    
     this.port = host.getMidiInPort (0);
     this.noteInput = this.port.createNoteInput ("OSC Midi");
-
+    
     host.addDatagramPacketObserver (receiveHost, receivePort, doObject (this, function (data)
     {
         var msg = new OSCMessage ();
@@ -27,12 +38,12 @@ function OSCParser (model, receiveHost, receivePort)
 OSCParser.prototype.parse = function (msg)
 {
 	var oscParts = msg.address.split ('/');
-	if (oscParts.length < 2)
+	oscParts.shift (); // Remove first empty element
+	if (oscParts.length == 0)
 		return;
         
     var value = msg.values == null ? null : msg.values[0];
 
-	oscParts.shift (); // Remove first empty element
 	switch (oscParts.shift ())
 	{
 		case 'track':
@@ -53,110 +64,55 @@ OSCParser.prototype.parse = function (msg)
         case 'device':
             if (value != null && value == 0)
                 return;
-            switch (oscParts.shift ())
-            {
-                case '+':
-                    this.model.getCursorDevice ().selectNext ();
-                    break;
-                case '-':
-                    this.model.getCursorDevice ().selectPrevious ();
-                    break;
-                case 'params':
-                    switch (oscParts.shift ())
-                    {
-                        case '+':
-                            this.model.getCursorDevice ().nextParameterPage ();
-                            break;
-                        case '-':
-                            this.model.getCursorDevice ().previousParameterPage ();
-                            break;
-                    }
-                    break;
-                case 'preset':
-                    switch (oscParts.shift ())
-                    {
-                        case '+':
-                            this.model.getCursorDevice ().switchToNextPreset ();
-                            break;
-                        case '-':
-                            this.model.getCursorDevice ().switchToPreviousPreset ();
-                            break;
-                    }
-                    break;
-                case 'category':
-                    switch (oscParts.shift ())
-                    {
-                        case '+':
-                            this.model.getCursorDevice ().switchToNextPresetCategory ();
-                            break;
-                        case '-':
-                            this.model.getCursorDevice ().switchToPreviousPresetCategory ();
-                            break;
-                    }
-                    break;
-                case 'creator':
-                    switch (oscParts.shift ())
-                    {
-                        case '+':
-                            this.model.getCursorDevice ().switchToNextPresetCreator ();
-                            break;
-                        case '-':
-                            this.model.getCursorDevice ().switchToPreviousPresetCreator ();
-                            break;
-                    }
-                    break;
-            }
+            this.parseDeviceValue (oscParts, value);
             break;
 
 		case 'click':
             if (value == null)
-                this.model.getTransport ().toggleClick ();
+                this.transport.toggleClick ();
             else if (value > 0)
-                this.model.getTransport ().setClick (value > 0);
+                this.transport.setClick (value > 0);
 			break;
 		
 		case 'stop':
-            var t = this.model.getTransport ();
-            if (value == null || (value > 0 && t.isPlaying))
-                t.play ();
+            if (value == null || (value > 0 && this.transport.isPlaying))
+                this.transport.play ();
 			break;
 
 		case 'play':
-            var t = this.model.getTransport ();
-            if (value == null || (value > 0 && !t.isPlaying))
-                t.play ();
+            if (value == null || (value > 0 && !this.transport.isPlaying))
+                this.transport.play ();
 			break;
 
 		case 'restart':
-            var t = this.model.getTransport ();
             if (value == null || value > 0)
-                t.restart ();
+                this.transport.restart ();
 			break;
 
 		case 'repeat':
             if (value == null)
-                this.model.getTransport ().toggleLoop ();
+                this.transport.toggleLoop ();
             else if (value > 0)
-                this.model.getTransport ().setLoop (value > 0);
+                this.transport.setLoop (value > 0);
 			break;
 		
 		case 'record':
             if (value == null || value > 0)
-                this.model.getTransport ().record ();
+                this.transport.record ();
 			break;
 
 		case 'overdub':
             if (value == null || value > 0)
-                this.model.getTransport ().toggleOverdub ();
+                this.transport.toggleOverdub ();
 			break;
 
 		case 'tempo':
 			if (oscParts[0] == 'raw')
-                this.model.getTransport ().setTempo (value);
+                this.transport.setTempo (value);
 			break;
 
 		case 'time':
-            this.model.getTransport ().setPosition (value);
+            this.transport.setPosition (value);
 			break;
 
 		case 'fx':
@@ -177,31 +133,33 @@ OSCParser.prototype.parse = function (msg)
 			break;
             
         case 'scene':
-            if (value != null && value == 0)
-                return;
-            switch (oscParts.shift ())
+            var p = oscParts.shift ();
+            switch (p)
             {
                 case '+':
-                    this.model.getTrackBank ().scrollScenesUp ();
+                    if (value == 1)
+                        this.trackBank.scrollScenesPageDown ();
                     break;
                 case '-':
-                    this.model.getTrackBank ().scrollScenesDown ();
+                    if (value == 1)
+                        this.trackBank.scrollScenesPageUp ();
+                    break;
+                default:
+                    var scene = parseInt (p);
+                    if (!scene)
+                        return;
+                    switch (oscParts.shift ())
+                    {
+                        case 'launch':
+                            this.trackBank.launchScene (scene - 1);
+                            break;
+                    }
                     break;
             }
             break;
             
         case 'vkb_midi':
-			var midiChannel = parseInt (oscParts.shift ());
-            
-            switch (oscParts.shift ())
-            {
-                case 'note':
-                    var note = parseInt (oscParts.shift ());
-                    var velocity = parseInt (value);
-                    this.noteInput.sendRawMidiEvent (0x90 + midiChannel, note, velocity);
-                    break;
-            }
-            
+            this.parseMidi (oscParts, value);
             break;
 		
 		default:
@@ -214,7 +172,6 @@ OSCParser.prototype.parseTrackCommands = function (parts, value)
 {
     if (value != null && value == 0)
         return;
-    var tb = this.model.getTrackBank ();
 
 	switch (parts[0])
  	{
@@ -222,37 +179,37 @@ OSCParser.prototype.parseTrackCommands = function (parts, value)
             parts.shift ();
             if (parts.shift () == '+')
             {
-                if (tb.canScrollTracksDown ())
-                    tb.scrollTracksPageDown ();
+                if (this.trackBank.canScrollTracksDown ())
+                    this.trackBank.scrollTracksPageDown ();
             }
             else // '-'
             {
-                if (tb.canScrollTracksUp ())
-                    tb.scrollTracksPageUp ();
+                if (this.trackBank.canScrollTracksUp ())
+                    this.trackBank.scrollTracksPageUp ();
             }
             break;
             
         case '+':
-            var sel = tb.getSelectedTrack ();
+            var sel = this.trackBank.getSelectedTrack ();
             var index = sel == null ? 0 : sel.index + 1;
             if (index == 8)
             {
-                if (!tb.canScrollTracksDown ())
+                if (!this.trackBank.canScrollTracksDown ())
                     return;
-                tb.scrollTracksPageDown ();
+                this.trackBank.scrollTracksPageDown ();
                 scheduleTask (doObject (this, this.selectTrack), [0], 75);
             }
             this.selectTrack (index);
             break;
             
         case '-':
-            var sel = tb.getSelectedTrack ();
+            var sel = this.trackBank.getSelectedTrack ();
             var index = sel == null ? 0 : sel.index - 1;
             if (index == -1)
             {
-                if (!tb.canScrollTracksUp ())
+                if (!this.trackBank.canScrollTracksUp ())
                     return;
-                tb.scrollTracksPageUp ();
+                this.trackBank.scrollTracksPageUp ();
                 scheduleTask (doObject (this, this.selectTrack), [7], 75);
                 return;
             }
@@ -273,9 +230,9 @@ OSCParser.prototype.parseTrackValue = function (trackIndex, parts, value)
             if (value && value == 0)
                 return;
             if (trackIndex == -1)
-                this.model.getMasterTrack ().select ();
+                this.masterTrack.select ();
             else
-                this.model.getTrackBank ().select (trackIndex);
+                this.trackBank.select (trackIndex);
 			break;
 			
 		case 'volume':
@@ -283,9 +240,9 @@ OSCParser.prototype.parseTrackValue = function (trackIndex, parts, value)
             {
 				var volume = parseFloat (value);
                 if (trackIndex == -1)
-                    this.model.getMasterTrack ().setVolume (volume);
+                    this.masterTrack.setVolume (volume);
                 else
-                    this.model.getTrackBank ().setVolume (trackIndex, volume);
+                    this.trackBank.setVolume (trackIndex, volume);
             }
 			break;
 			
@@ -294,9 +251,9 @@ OSCParser.prototype.parseTrackValue = function (trackIndex, parts, value)
             {
 				var pan = value;
                 if (trackIndex == -1)
-                    this.model.getMasterTrack ().setPan (pan);
+                    this.masterTrack.setPan (pan);
                 else
-                    this.model.getTrackBank ().setPan (trackIndex, pan);
+                    this.trackBank.setPan (trackIndex, pan);
             }
 			break;
 			
@@ -304,47 +261,47 @@ OSCParser.prototype.parseTrackValue = function (trackIndex, parts, value)
 			var mute = value == null ? null : parseInt (value);
             if (trackIndex == -1)
                 if (mute == null)
-                    this.model.getMasterTrack ().toggleMute ();
+                    this.masterTrack.toggleMute ();
                 else
-                    this.model.getMasterTrack ().setMute (mute > 0);
+                    this.masterTrack.setMute (mute > 0);
             else
                 if (mute == null)
-                    this.model.getTrackBank ().toggleMute (trackIndex);
+                    this.trackBank.toggleMute (trackIndex);
                 else
-                    this.model.getTrackBank ().setMute (trackIndex, mute > 0);
+                    this.trackBank.setMute (trackIndex, mute > 0);
 			break;
 			
 		case 'solo':
 			var solo = value == null ? null : parseInt (value);
             if (trackIndex == -1)
                 if (solo == null)
-                    this.model.getMasterTrack ().toggleSolo ();
+                    this.masterTrack.toggleSolo ();
                 else
-                    this.model.getMasterTrack ().setSolo (solo > 0);
+                    this.masterTrack.setSolo (solo > 0);
             else
                 if (solo == null)
-                    this.model.getTrackBank ().toggleSolo (trackIndex);
+                    this.trackBank.toggleSolo (trackIndex);
                 else
-                    this.model.getTrackBank ().setSolo (trackIndex, solo > 0);
+                    this.trackBank.setSolo (trackIndex, solo > 0);
 			break;
 			
 		case 'recarm':
 			var recarm = value == null ? null : parseInt (value);
             if (trackIndex == -1)
                 if (recarm == null)
-                    this.model.getMasterTrack ().toggleArm ();
+                    this.masterTrack.toggleArm ();
                 else
-                    this.model.getMasterTrack ().setArm (recarm > 0);
+                    this.masterTrack.setArm (recarm > 0);
             else
                 if (recarm == null)
-                    this.model.getTrackBank ().toggleArm (trackIndex);
+                    this.trackBank.toggleArm (trackIndex);
                 else
-                    this.model.getTrackBank ().setArm (trackIndex, recarm > 0);
+                    this.trackBank.setArm (trackIndex, recarm > 0);
 			break;
 			
 		case 'autowrite':
             // Note: Can only be activated globally
-            this.model.getTransport ().toggleWriteArrangerAutomation ();
+            this.transport.toggleWriteArrangerAutomation ();
 			break;
 			
 		case 'send':
@@ -353,6 +310,14 @@ OSCParser.prototype.parseTrackValue = function (trackIndex, parts, value)
 			if (isNaN (sendNo))
 				return;
 			this.parseSendValue (trackIndex, sendNo - 1, parts, value);
+			break;
+            
+        case 'clip':
+			parts.shift ();
+			var clipNo = parseInt (parts.shift ());
+			if (isNaN (clipNo))
+				return;
+			this.trackBank.getClipLauncherSlots (trackIndex).launch (clipNo - 1);
 			break;
             
 		default:
@@ -399,16 +364,153 @@ OSCParser.prototype.parseSendValue = function (trackIndex, sendIndex, parts, val
 	switch (parts[0])
  	{
 		case 'volume':
-            this.model.getTrackBank ().setSend (trackIndex, sendIndex, value);
+            this.trackBank.setSend (trackIndex, sendIndex, value);
 			break;
-            
+
         default:
 			println ('Unhandled Send Parameter value: ' + parts[0]);
 			break;
 	}
 };
 
+OSCParser.prototype.parseDeviceValue = function (parts, value)
+{
+    var cd = this.model.getCursorDevice ();
+    
+    var p = parts.shift ();
+    switch (p)
+    {
+        case '+':
+            cd.selectNext ();
+            break;
+
+        case '-':
+            cd.selectPrevious ();
+            break;
+
+        case 'params':
+            switch (parts.shift ())
+            {
+                case '+':
+                    cd.nextParameterPage ();
+                    break;
+                case '-':
+                    cd.previousParameterPage ();
+                    break;
+            }
+            break;
+
+        case 'preset':
+            switch (parts.shift ())
+            {
+                case '+':
+                    cd.switchToNextPreset ();
+                    break;
+                case '-':
+                    cd.switchToPreviousPreset ();
+                    break;
+            }
+            break;
+
+        case 'category':
+            switch (parts.shift ())
+            {
+                case '+':
+                    cd.switchToNextPresetCategory ();
+                    break;
+                case '-':
+                    cd.switchToPreviousPresetCategory ();
+                    break;
+            }
+            break;
+
+        case 'creator':
+            switch (parts.shift ())
+            {
+                case '+':
+                    cd.switchToNextPresetCreator ();
+                    break;
+                case '-':
+                    cd.switchToPreviousPresetCreator ();
+                    break;
+            }
+            break;
+
+        default:
+			println ('Unhandled Device Parameter: ' + p);
+			break;
+    }
+};
+
+OSCParser.prototype.parseMidi = function (parts, value)
+{
+    var midiChannel = parseInt (parts.shift ());
+    var p = parts.shift ();
+    switch (p)
+    {
+        case 'note':
+            var n = parts.shift ();
+            switch (n)
+            {
+                case '+':
+                    if (!value)
+                        return;
+                    this.scales.incOctave ();
+                    this.updateNoteMapping ();
+                    break;
+            
+                case '-':
+                    if (!value)
+                        return;
+                    this.scales.decOctave ();
+                    this.updateNoteMapping ();
+                    break;
+            
+                default:
+                    var note = parseInt (n);
+                    var velocity = parseInt (value);
+                    this.noteInput.sendRawMidiEvent (0x90 + midiChannel, this.keysTranslation[note], velocity);
+            }
+            break;
+            
+        case 'drum':
+            var n = parts.shift ();
+            switch (n)
+            {
+                case '+':
+                    if (!value)
+                        return;
+                    this.scales.incDrumOctave ();
+                    this.updateNoteMapping ();
+                    break;
+            
+                case '-':
+                    if (!value)
+                        return;
+                    this.scales.decDrumOctave ();
+                    this.updateNoteMapping ();
+                    break;
+            
+                default:
+                    var note = parseInt (n);
+                    var velocity = parseInt (value);
+                    this.noteInput.sendRawMidiEvent (0x90 + midiChannel, this.drumsTranslation[note], velocity);
+            }
+            break;
+            
+        default:
+			println ('Unhandled Midi Parameter: ' + p);
+            break;
+    }
+};
+
+OSCParser.prototype.updateNoteMapping = function ()
+{
+    this.drumsTranslation = this.scales.getDrumMatrix ();
+    this.keysTranslation = this.scales.getNoteMatrix (); 
+};
+
 OSCParser.prototype.selectTrack = function (index)
 {
-    this.model.getTrackBank ().select (index);
+    this.trackBank.select (index);
 };

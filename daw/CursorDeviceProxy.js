@@ -13,7 +13,7 @@ function CursorDeviceProxy ()
     this.selectedParameterPage = -1;
     this.parameterPageNames = null;
     this.presetWidth = 16;
-    this.fxparams = [ { index: 0, name: '' }, { index: 1, name: '' }, { index: 2, name: '' }, { index: 3, name: '' }, { index: 4, name: '' }, { index: 5, name: '' }, { index: 6, name: '' }, { index: 7, name: '' } ];
+    this.fxparams = this.createFXParams (8);
     this.selectedDevice =
     {
         name: 'None',
@@ -273,6 +273,22 @@ CursorDeviceProxy.prototype.getSelectedParameterPageName = function ()
 CursorDeviceProxy.prototype.isMacroMapping = function (index)
 {
     return this.isMacroMappings[index];
+};
+
+CursorDeviceProxy.prototype.createFXParams = function (count)
+{
+    var fxparams = [];
+    for (var i = 0; i < count; i++)
+    {
+        fxparams.push (
+        {
+            index: i,
+            name: '',
+            valueStr: '',
+            value: 0,
+        });
+    }
+    return fxparams;
 };
 
 //--------------------------------------

@@ -3,15 +3,19 @@
 // Licensed under GPLv3 - http://www.gnu.org/licenses/gpl.html
 
 OSCWriter.TRACK_ATTRIBS = [ "selected", "name", "volumeStr", "volume", "vu", "mute", "solo", "recarm", "panStr", "pan", "sends", "slots" ];
+OSCWriter.FXPARAM_ATTRIBS = [ "name", "valueStr", "value" ];
 
 function OSCWriter (model, oscHost, oscPort)
 {
     this.oscHost = oscHost;
     this.oscPort = oscPort;
     
-    var tb = model.getTrackBank ();
+    this.model = model;
+    
+    var tb = this.model.getTrackBank ();
 	this.oldTracks = tb.createTracks (8);
 	this.oldMasterTrack = tb.createTracks (1)[0];
+    this.oldFXParams = this.model.getCursorDevice ().createFXParams (8);
     this.isClickOn   = false;
     this.isPlaying   = false;
     this.isRecording = false;
@@ -23,12 +27,16 @@ OSCWriter.prototype.flush = function (dump)
 {
 	this.sendOSC ('/update', true);
     
-	var tb = model.getTrackBank ();
+	var tb = this.model.getTrackBank ();
 	for (var i = 0; i < 8; i++)
-        this.flushTrack ('/track/' + (i + 1), tb.getTrack (i), this.oldTracks[i], dump);
-    this.flushTrack ('/master', model.getMasterTrack (), this.oldMasterTrack, dump);
+        this.flushTrack ('/track/' + (i + 1) + '/', tb.getTrack (i), this.oldTracks[i], dump);
+    this.flushTrack ('/master/', this.model.getMasterTrack (), this.oldMasterTrack, dump);
     
-    var trans = model.getTransport ();
+    var cd = this.model.getCursorDevice ();
+	for (var i = 0; i < 8; i++)
+        this.flushFX ('/fxparam/' + (i + 1) + '/', cd.getFXParam (i), this.oldFXParams[i], dump);
+    
+    var trans = this.model.getTransport ();
     if (this.isClickOn != trans.isClickOn || dump)
     {
         this.sendOSC ('/click', trans.isClickOn);
@@ -75,7 +83,7 @@ OSCWriter.prototype.flushTrack = function (trackAddress, track, oldTrack, dump)
                     {
                         if (s[q] != os[q] || dump)
                         {
-                            this.sendOSC (trackAddress + '/send/' + j + '/' + q, s[q]);
+                            this.sendOSC (trackAddress + 'send/' + j + '/' + q, s[q]);
                             os[q] = s[q];
                         }
                     }
@@ -93,7 +101,7 @@ OSCWriter.prototype.flushTrack = function (trackAddress, track, oldTrack, dump)
                     {
                         if (s[q] != os[q] || dump)
                         {
-                            this.sendOSC (trackAddress + '/slot/' + j + '/' + q, s[q]);
+                            this.sendOSC (trackAddress + 'slot/' + j + '/' + q, s[q]);
                             os[q] = s[q];
                         }
                     }
@@ -103,10 +111,23 @@ OSCWriter.prototype.flushTrack = function (trackAddress, track, oldTrack, dump)
             default:
                 if (track[p] != oldTrack[p] || dump)
                 {
-                    this.sendOSC (trackAddress + '/' + p, track[p]);
+                    this.sendOSC (trackAddress + p, track[p]);
                     oldTrack[p] = track[p];
                 }
                 break;
+        }
+	}
+};
+
+OSCWriter.prototype.flushFX = function (fxAddress, fxParam, oldFxParam, dump)
+{
+    for (var a = 0; a < OSCWriter.FXPARAM_ATTRIBS.length; a++)
+    {
+        var p = OSCWriter.FXPARAM_ATTRIBS[a];
+        if (fxParam[p] != oldFxParam[p] || dump)
+        {
+            this.sendOSC (fxAddress + p, fxParam[p]);
+            oldFxParam[p] = fxParam[p];
         }
 	}
 };
